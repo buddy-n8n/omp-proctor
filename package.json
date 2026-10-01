@@ -1,0 +1,17 @@
+{
+	"name": "omp-proctor",
+	"version": "0.1.0",
+	"description": "Make your OMP agent abide by your project rules: every edit and turn judged against AGENTS.md and friends",
+	"license": "MIT",
+	"type": "module",
+	"keywords": ["omp-plugin", "oh-my-pi", "rules", "agents-md"],
+	"omp": {
+		"extensions": ["./src/index.ts"]
+	},
+	"scripts": {
+		"test": "bun test"
+	},
+	"peerDependencies": {
+		"@oh-my-pi/pi-coding-agent": ">=18.4.4"
+	}
+}
