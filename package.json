@@ -1,6 +1,6 @@
 {
 	"name": "omp-proctor",
-	"version": "0.2.0",
+	"version": "0.1.1",
 	"description": "Make your OMP agent abide by your project rules: every edit and turn judged against AGENTS.md and friends",
 	"license": "MIT",
 	"type": "module",
