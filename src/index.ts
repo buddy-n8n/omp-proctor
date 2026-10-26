@@ -150,6 +150,7 @@ export default function proctor(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (_event, ctx) => {
+		if (!root) await activate(ctx); // repo may have been created mid-session
 		if (!root || !enabled) return;
 		editedThisTurn.clear();
 		try {
@@ -308,6 +309,7 @@ export default function proctor(pi: ExtensionAPI) {
 		description: "Rule enforcement: status, on, off, compile, report, audit, calibrate",
 		handler: async (args, ctx) => {
 			const [sub = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+			if (!root) await activate(ctx); // repo may have been created mid-session
 			if (!root) {
 				notify(ctx, "Proctor needs a git repository; it is inactive here.", "warning");
 				return;
