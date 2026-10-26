@@ -33,6 +33,11 @@ export async function repoRoot(cwd: string): Promise<string | undefined> {
 	}
 }
 
+/** `git init` in `cwd`. */
+export async function initRepo(cwd: string): Promise<void> {
+	await git(cwd, ["init"]);
+}
+
 /** Tree hash of the current working tree (tracked + untracked, honouring .gitignore). */
 export async function snapshot(root: string): Promise<string> {
 	const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "proctor-"));

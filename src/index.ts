@@ -20,7 +20,7 @@ import {
 } from "@oh-my-pi/pi-coding-agent/judgment";
 import { audit, calibrate, MIN_CALIBRATION_SAMPLES } from "./batch";
 import { appendEvents, formatReport, type ProctorEvent, readEvents, summarize } from "./events";
-import { diffTrees, type FileDiff, recentHunks, repoRoot, snapshot, trackedFiles } from "./git";
+import { diffTrees, type FileDiff, initRepo, recentHunks, repoRoot, snapshot, trackedFiles } from "./git";
 import {
 	activeRules,
 	compilePrompt,
@@ -311,8 +311,20 @@ export default function proctor(pi: ExtensionAPI) {
 			const [sub = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			if (!root) await activate(ctx); // repo may have been created mid-session
 			if (!root) {
-				notify(ctx, "Proctor needs a git repository; it is inactive here.", "warning");
-				return;
+				const offer = ctx.hasUI && (await ctx.ui.confirm("Proctor needs a git repository", `Run \`git init\` in ${ctx.cwd}?`));
+				if (!offer) {
+					notify(ctx, "Proctor needs a git repository; it is inactive here.", "warning");
+					return;
+				}
+				try {
+					await initRepo(ctx.cwd);
+				} catch (err) {
+					notify(ctx, `git init failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+					return;
+				}
+				await activate(ctx);
+				if (!root) return;
+				notify(ctx, `Initialized a git repository in ${root}.`);
 			}
 			const current = await currentRubric();
 			switch (sub) {

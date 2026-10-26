@@ -75,7 +75,7 @@ Repair src/legacy.js now, then continue with the task.
 
 ## Limits
 
-- Git repositories only; elsewhere Proctor stays inactive.
+- Git repositories only. Outside one, `/proctor` offers to run `git init`; if you decline, Proctor stays inactive.
 - `sourceHash` covers every instruction file OMP loads, including user-global ones such as `~/.claude/CLAUDE.md`, so teammates with different global files see the rubric as stale.
 - Edit tool calls that run in parallel can see each other's changes in their before/after diffs, so a file changed by a sibling call may be judged twice.
 
