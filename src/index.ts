@@ -20,7 +20,7 @@ import {
 } from "@oh-my-pi/pi-coding-agent/judgment";
 import { audit, calibrate, MIN_CALIBRATION_SAMPLES } from "./batch";
 import { appendEvents, formatReport, type ProctorEvent, readEvents, summarize } from "./events";
-import { diffTrees, type FileDiff, initRepo, recentHunks, repoRoot, snapshot, trackedFiles } from "./git";
+import { diffTrees, type FileDiff, initRepo, markdownFiles, recentHunks, repoRoot, snapshot, trackedFiles } from "./git";
 import {
 	activeRules,
 	compilePrompt,
@@ -35,6 +35,7 @@ import {
 	type Rule,
 	saveRubric,
 } from "./rubric";
+import { loadRulesFiles, rulesCandidates, saveRulesFiles } from "./sources";
 import { judgeChange, noteMessage, repairMessage, type Verdict } from "./verdict";
 
 /** Tools whose results are checked per edit. Anything else that writes is caught at turn end. */
@@ -58,6 +59,12 @@ export default function proctor(pi: ExtensionAPI) {
 	let sources: Array<{ path: string; content: string }> = [];
 	let sourceHash = "";
 	let compileOffered = false;
+	/** Repo-relative markdown files the user chose as rules (config.json); empty when none. */
+	let rulesFiles: string[] = [];
+	/** config.json exists: the user already answered, so never prompt again. */
+	let rulesConfigured = false;
+	/** Asked this session (a dismissed prompt returns next session, not next turn). */
+	let rulesAsked = false;
 	let judge: ChainJudge | undefined;
 	/** Tree at the start of the current user turn. */
 	let baseline: string | undefined;
@@ -120,8 +127,71 @@ export default function proctor(pi: ExtensionAPI) {
 		);
 
 	const refreshSources = async (ctx: ExtensionContext) => {
-		sources = (await pi.pi.discoverContextFiles(ctx.cwd)).map(f => ({ path: f.path, content: f.content }));
+		// git reports the real path; OMP may report the symlinked cwd (/tmp, /var on macOS). Compare like with like.
+		const found = await Promise.all(
+			(await pi.pi.discoverContextFiles(ctx.cwd)).map(async f => ({
+				path: await fs.realpath(f.path).catch(() => f.path),
+				content: f.content,
+			})),
+		);
+		for (const rel of rulesFiles) {
+			const abs = path.join(root ?? ctx.cwd, rel);
+			const content = await Bun.file(abs).text().catch(() => undefined);
+			if (content !== undefined && !found.some(f => f.path === abs)) found.push({ path: abs, content });
+		}
+		sources = found;
 		sourceHash = hashSources(sources);
+	};
+
+	/** Repo-relative paths of instruction files inside the repo (user-global ones excluded). */
+	const projectRules = (): string[] =>
+		sources.map(s => path.relative(root ?? "", s.path)).filter(rel => !rel.startsWith(".."));
+
+	/** Make `inputs` the rules files. Returns an error message, or undefined on success. */
+	const useRulesFiles = async (ctx: ExtensionContext, inputs: string[]): Promise<string | undefined> => {
+		if (!root) return "not in a git repository";
+		const rels: string[] = [];
+		for (const input of inputs) {
+			const rel = path.relative(root, path.resolve(root, input));
+			if (rel.startsWith("..") || path.isAbsolute(rel)) return `${input} is outside the repository`;
+			if (!(await Bun.file(path.join(root, rel)).exists())) return `${input} does not exist`;
+			rels.push(rel);
+		}
+		rulesFiles = rels;
+		rulesConfigured = true;
+		await saveRulesFiles(root, rels);
+		await refreshSources(ctx);
+		return undefined;
+	};
+
+	/** No AGENTS.md / CLAUDE.md: tell the user and let them pick the file that holds the rules. */
+	const offerRulesFile = async (ctx: ExtensionContext, force = false) => {
+		if (!root || (!force && (rulesAsked || rulesConfigured || projectRules().length > 0))) return;
+		rulesAsked = true;
+		const candidates = rulesCandidates(await markdownFiles(root));
+		if (!ctx.hasUI) {
+			const hint = candidates.length ? ` Candidates: ${candidates.join(", ")}.` : "";
+			notify(ctx, `Proctor: no AGENTS.md or CLAUDE.md in this repo, so there are no rules to enforce.${hint} Run /proctor use <file> to choose the rules file.`, "warning");
+			return;
+		}
+		const other = "Another file...";
+		const none = "None, stop asking";
+		const title = projectRules().length
+			? "Which file holds extra project rules for Proctor?"
+			: "Proctor found no AGENTS.md or CLAUDE.md. Which file holds this project's rules?";
+		const picked = await ctx.ui.select(title, [...candidates, other, none]);
+		if (!picked) return; // dismissed: ask again next session
+		if (picked === none) {
+			rulesFiles = [];
+			rulesConfigured = true;
+			await saveRulesFiles(root, []);
+			notify(ctx, "Proctor has no rules file and stays idle here. Run /proctor use <file> any time to pick one.");
+			return;
+		}
+		const file = picked === other ? await ctx.ui.input("Rules file path, relative to the repo root", "DESIGN.md") : picked;
+		if (!file) return;
+		const err = await useRulesFiles(ctx, [file]);
+		notify(ctx, err ? `Proctor: ${err}.` : `Proctor will read rules from ${file}.`, err ? "warning" : "info");
 	};
 
 	const activate = async (ctx: ExtensionContext) => {
@@ -133,6 +203,10 @@ export default function proctor(pi: ExtensionAPI) {
 		preEdit.clear();
 		rubricMtime = 0;
 		if (!root) return;
+		const chosen = await loadRulesFiles(root);
+		rulesFiles = chosen ?? [];
+		rulesConfigured = chosen !== undefined;
+		rulesAsked = false;
 		await refreshSources(ctx);
 		await currentRubric();
 		if (rubricError) notify(ctx, `Proctor: ${RUBRIC_PATH} is invalid (${rubricError}); checks are off until it is fixed.`, "error");
@@ -152,6 +226,7 @@ export default function proctor(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (!root) await activate(ctx); // repo may have been created mid-session
 		if (!root || !enabled) return;
+		await offerRulesFile(ctx);
 		editedThisTurn.clear();
 		try {
 			baseline = await snapshot(root);
@@ -303,10 +378,10 @@ export default function proctor(pi: ExtensionAPI) {
 	// ---------------------------------------------------------------- /proctor
 
 	const USAGE =
-		"Usage: /proctor [status|on|off|compile|report|audit [paths...]|calibrate [commits]]";
+		"Usage: /proctor [status|on|off|compile|use [files...]|report|audit [paths...]|calibrate [commits]]";
 
 	pi.registerCommand("proctor", {
-		description: "Rule enforcement: status, on, off, compile, report, audit, calibrate",
+		description: "Rule enforcement: status, on, off, compile, use, report, audit, calibrate",
 		handler: async (args, ctx) => {
 			const [sub = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			if (!root) await activate(ctx); // repo may have been created mid-session
@@ -339,7 +414,7 @@ export default function proctor(pi: ExtensionAPI) {
 					const model = getJudge(ctx).primaryModel();
 					notify(
 						ctx,
-						`Proctor ${state}. ${RUBRIC_PATH}: ${rubricState}. Judge: ${model ? `${model.provider}/${model.id}` : "none available"}.`,
+						`Proctor ${state}. Rules from: ${projectRules().join(", ") || "none (run /proctor use <file>)"}. ${RUBRIC_PATH}: ${rubricState}. Judge: ${model ? `${model.provider}/${model.id}` : "none available"}.`,
 					);
 					return;
 				}
@@ -351,12 +426,21 @@ export default function proctor(pi: ExtensionAPI) {
 				case "compile":
 					await refreshSources(ctx);
 					if (sources.length === 0) {
-						notify(ctx, "Proctor: no instruction files (AGENTS.md, CLAUDE.md, ...) found.", "warning");
+						notify(ctx, "Proctor: no rules to compile. No AGENTS.md or CLAUDE.md found; run /proctor use <file> to choose one.", "warning");
 						return;
 					}
 					compileOffered = true;
 					pi.sendUserMessage(compilePrompt({ files: sources, sourceHash, root, existing: current }));
 					return;
+				case "use": {
+					if (rest.length === 0) {
+						await offerRulesFile(ctx, true);
+					} else {
+						const err = await useRulesFiles(ctx, rest);
+						notify(ctx, err ? `Proctor: ${err}.` : `Proctor will read rules from ${rest.join(", ")}. Run /proctor compile to rebuild the rubric.`, err ? "warning" : "info");
+					}
+					return;
+				}
 				case "report":
 					if (!current) break;
 					notify(ctx, formatReport(summarize(current, await readEvents(root))));
