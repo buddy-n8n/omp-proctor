@@ -53,6 +53,7 @@ async function host(dir: string, answers: Answers = {}, hasUI = true) {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<any>>();
 	let command: (args: string, ctx: unknown) => Promise<void> = async () => {};
 	const notices: string[] = []; // transcript lines: survive on screen
+	const state = { idle: true }; // flip to simulate a command typed while the agent streams
 	const toasts: string[] = []; // fading toasts: must not carry command output
 	const asked = { select: 0, confirm: 0 };
 	const pi = {
@@ -81,6 +82,7 @@ async function host(dir: string, answers: Answers = {}, hasUI = true) {
 	const ctx = {
 		cwd: dir,
 		hasUI,
+		isIdle: () => state.idle,
 		sessionManager: { getSessionId: () => "s" },
 		modelRegistry: { getAvailable: () => [] },
 		ui: {
@@ -104,6 +106,7 @@ async function host(dir: string, answers: Answers = {}, hasUI = true) {
 		turn: () => handlers.get("before_agent_start")!({}, ctx),
 		run: (args: string) => command(args, ctx),
 		context: (messages: unknown[]) => handlers.get("context")!({ messages }, ctx),
+		state,
 	};
 }
 
@@ -117,6 +120,19 @@ describe("what the model sees", () => {
 		];
 		const result = await h.context(messages);
 		expect(result.messages.map((m: { customType?: string; role: string }) => m.customType ?? m.role)).toEqual(["user", "proctor"]);
+	});
+});
+
+describe("commands while the agent is streaming", () => {
+	test("use a toast: a transcript message would steer the running turn", async () => {
+		const h = await host(await repo({}));
+		h.state.idle = false;
+		await h.run("on");
+		expect(h.notices).toEqual([]);
+		expect(h.toasts).toEqual(["Proctor on for this session."]);
+		h.state.idle = true;
+		await h.run("off");
+		expect(h.notices).toEqual(["Proctor off for this session."]);
 	});
 });
 

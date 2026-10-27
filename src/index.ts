@@ -119,8 +119,12 @@ export default function proctor(pi: ExtensionAPI) {
 		else process.stderr.write(`${text}\n`);
 	};
 
-	/** Output the user must not miss: a transcript line instead of a toast that fades; stderr when headless. */
+	/**
+	 * Output the user must not miss: a transcript line instead of a toast that fades; stderr when headless.
+	 * While the agent streams, `sendMessage` would steer the running turn, so fall back to a toast then.
+	 */
 	const notify = (ctx: ExtensionContext, text: string, level: "info" | "warning" | "error" = "info") => {
+		if (ctx.hasUI && !ctx.isIdle()) return toast(ctx, text, level);
 		const line = level === "info" ? text : `${level === "error" ? "Error" : "Warning"}: ${text}`;
 		if (ctx.hasUI) pi.sendMessage({ customType: "proctor-note", content: line, display: true });
 		else process.stderr.write(`${line}\n`);
