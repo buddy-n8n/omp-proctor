@@ -516,7 +516,9 @@ export default function proctor(pi: ExtensionAPI) {
 						? `invalid: ${rubricError}`
 						: current
 							? `${current.rules.filter(r => r.enabled).length}/${current.rules.length} rules enabled${needsCompile() ? ", stale (instruction files changed)" : ""}`
-							: "no rubric yet (compiled on your next prompt, or run /proctor compile)";
+							: sources.length > 0
+								? "no rubric yet (compiled on your next prompt, or run /proctor compile)"
+								: "no rubric yet (no rules selected; run /proctor use <file> to choose one)";
 					const model = getJudge(ctx).primaryModel();
 					notify(
 						ctx,
