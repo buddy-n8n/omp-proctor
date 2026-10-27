@@ -510,12 +510,13 @@ export default function proctor(pi: ExtensionAPI) {
 			switch (sub) {
 				case "status": {
 					await refreshSources(ctx);
+					if (projectRules().length === 0 && !rulesConfigured && (await offerRulesFile(ctx, true)) === "compile") startCompile();
 					const state = enabled ? "on" : "off";
 					const rubricState = rubricError
 						? `invalid: ${rubricError}`
 						: current
 							? `${current.rules.filter(r => r.enabled).length}/${current.rules.length} rules enabled${needsCompile() ? ", stale (instruction files changed)" : ""}`
-							: "no rubric yet";
+							: "no rubric yet (compiled on your next prompt, or run /proctor compile)";
 					const model = getJudge(ctx).primaryModel();
 					notify(
 						ctx,
@@ -530,6 +531,7 @@ export default function proctor(pi: ExtensionAPI) {
 					return;
 				case "compile":
 					await refreshSources(ctx);
+					if (projectRules().length === 0 && !rulesConfigured && (await offerRulesFile(ctx, true)) === "later") return;
 					if (sources.length === 0) {
 						notify(ctx, "Proctor: no rules to compile. No AGENTS.md or CLAUDE.md found; run /proctor use <file> to choose one.", "warning");
 						return;

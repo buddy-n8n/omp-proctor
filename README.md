@@ -38,9 +38,9 @@ Repair src/legacy.js now, then continue with the task.
 
 | Command | What it does |
 |---|---|
-| `/proctor` or `/proctor status` | on/off, rubric state (stale if instruction files changed), which judge model answers |
+| `/proctor` or `/proctor status` | on/off, rubric state (stale if instruction files changed), which judge model answers. With no rules chosen yet, opens the checklist first |
 | `/proctor on` / `off` | toggle for this session |
-| `/proctor compile` | have the agent (re)compile the rubric |
+| `/proctor compile` | have the agent (re)compile the rubric. With no rules chosen yet, opens the checklist first |
 | `/proctor use [files...]` | choose the rules files: with paths, validate them, confirm, save and (optionally) compile; with none, open the checklist. Saved to `.omp/proctor/config.json` |
 | `/proctor report` | per rule: repairs and notes fired, rules that never fired, unchecked counts by reason |
 | `/proctor audit [paths...]` | judge existing tracked files as if just written |
