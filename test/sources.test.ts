@@ -299,6 +299,16 @@ describe("the picker", () => {
 		expect(seen[0].checked).toEqual(["DESIGN.md"]);
 	});
 
+	test("the title does not claim AGENTS.md is missing when the saved pick is AGENTS.md", async () => {
+		const dir = await repo({ "AGENTS.md": "- Be kind.\n" });
+		await saveRulesFiles(dir, ["AGENTS.md"]);
+		const titles: string[] = [];
+		const h = await host(dir, { select: dialog((o, t) => (titles.push(t), cancel(o))) });
+		await h.start();
+		await h.run("use");
+		expect(titles[0]).not.toMatch(/found no/);
+	});
+
 	test("uppercase .MD files are offered too", async () => {
 		const dir = await repo({ "RULES.MD": "x\n" });
 		let offered: string[] = [];

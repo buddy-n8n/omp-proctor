@@ -279,7 +279,9 @@ export default function proctor(pi: ExtensionAPI) {
 		}
 		const title = read.size
 			? "Which files hold extra project rules for Proctor?"
-			: "Proctor found no AGENTS.md or CLAUDE.md. Which files hold this project's rules?";
+			: rulesFiles.length
+				? "Which files hold this project's rules for Proctor?" // a saved pick may itself be AGENTS.md or CLAUDE.md
+				: "Proctor found no AGENTS.md or CLAUDE.md. Which files hold this project's rules?";
 		const chosen = await pickRules(ctx, candidates, rulesFiles.length ? rulesFiles : standard, title);
 		if (!chosen) return undefined; // cancelled: nothing saved, ask again next session
 		if (chosen.length === 0) {
