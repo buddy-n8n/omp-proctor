@@ -52,7 +52,9 @@ type Answers = { confirm?: boolean; select?: (options: string[]) => string | und
 async function host(dir: string, answers: Answers = {}, hasUI = true) {
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<any>>();
 	let command: (args: string, ctx: unknown) => Promise<void> = async () => {};
-	const notices: string[] = [];
+	const notices: string[] = []; // transcript lines: survive on screen
+	const state = { idle: true }; // flip to simulate a command typed while the agent streams
+	const toasts: string[] = []; // fading toasts: must not carry command output
 	const asked = { select: 0, confirm: 0 };
 	const pi = {
 		setLabel() {},
@@ -61,6 +63,9 @@ async function host(dir: string, answers: Answers = {}, hasUI = true) {
 			command = cmd.handler;
 		},
 		sendUserMessage() {},
+		sendMessage: (m: { content: string; display?: boolean }) => {
+			if (m.display) notices.push(m.content);
+		},
 		logger: { warn() {}, debug() {} },
 		pi: {
 			settings: {},
@@ -77,10 +82,11 @@ async function host(dir: string, answers: Answers = {}, hasUI = true) {
 	const ctx = {
 		cwd: dir,
 		hasUI,
+		isIdle: () => state.idle,
 		sessionManager: { getSessionId: () => "s" },
 		modelRegistry: { getAvailable: () => [] },
 		ui: {
-			notify: (text: string) => notices.push(text),
+			notify: (text: string) => toasts.push(text),
 			confirm: async () => {
 				asked.confirm++;
 				return answers.confirm ?? false;
@@ -94,12 +100,41 @@ async function host(dir: string, answers: Answers = {}, hasUI = true) {
 	};
 	return {
 		notices,
+		toasts,
 		asked,
 		start: () => handlers.get("session_start")!({}, ctx),
 		turn: () => handlers.get("before_agent_start")!({}, ctx),
 		run: (args: string) => command(args, ctx),
+		context: (messages: unknown[]) => handlers.get("context")!({ messages }, ctx),
+		state,
 	};
 }
+
+describe("what the model sees", () => {
+	test("user-facing proctor-note lines are dropped from LLM context; the compile prompt stays", async () => {
+		const h = await host(await repo({}));
+		const messages = [
+			{ role: "user", content: "hi" },
+			{ role: "custom", customType: "proctor-note", content: "Proctor will read rules from DESIGN.md." },
+			{ role: "custom", customType: "proctor", content: "[proctor] Compile the project rubric" },
+		];
+		const result = await h.context(messages);
+		expect(result.messages.map((m: { customType?: string; role: string }) => m.customType ?? m.role)).toEqual(["user", "proctor"]);
+	});
+});
+
+describe("commands while the agent is streaming", () => {
+	test("use a toast: a transcript message would steer the running turn", async () => {
+		const h = await host(await repo({}));
+		h.state.idle = false;
+		await h.run("on");
+		expect(h.notices).toEqual([]);
+		expect(h.toasts).toEqual(["Proctor on for this session."]);
+		h.state.idle = true;
+		await h.run("off");
+		expect(h.notices).toEqual(["Proctor off for this session."]);
+	});
+});
 
 const dirs: string[] = [];
 async function repo(files: Record<string, string>) {
@@ -200,6 +235,7 @@ describe("/proctor use", () => {
 		await h.run("use nope.md");
 		expect(await loadRulesFiles(dir)).toBeUndefined();
 		expect(h.notices.filter(n => /outside the repository|does not exist/.test(n))).toHaveLength(2);
+		expect(h.toasts).toEqual([]); // command output never goes to a toast that fades
 		await h.run("use DESIGN.md");
 		expect(await loadRulesFiles(dir)).toEqual(["DESIGN.md"]);
 		const result = await h.turn();
