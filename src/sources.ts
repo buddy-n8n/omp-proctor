@@ -47,3 +47,30 @@ export function rulesCandidates(files: readonly string[], max = 8): string[] {
 	const rest = out.filter(f => !HINT.test(path.basename(f)));
 	return [...hinted.sort(), ...rest.sort()].slice(0, max);
 }
+
+/** Files other coding agents standardise on for project rules. OMP's context-file discovery loads only some of them. */
+const STANDARD_FILES = [
+	"AGENTS.md", // Codex, Amp, OpenCode, Jules, Copilot CLI
+	"CLAUDE.md", // Claude Code
+	"GEMINI.md", // Gemini CLI
+	"CONVENTIONS.md", // Aider
+	".cursorrules", // Cursor (legacy)
+	".windsurfrules", // Windsurf (legacy)
+	".clinerules", // Cline (single file)
+	".rules", // Zed
+	".github/copilot-instructions.md", // GitHub Copilot
+];
+const STANDARD_DIRS: ReadonlyArray<readonly [dir: string, ext: RegExp]> = [
+	[".cursor/rules/", /\.mdc?$/],
+	[".windsurf/rules/", /\.md$/],
+	[".clinerules/", /\.md$/],
+	[".github/instructions/", /\.instructions\.md$/],
+];
+
+/** Git pathspecs that cover every candidate: any markdown, plus the standard non-markdown names and folders. */
+export const RULE_PATHSPECS = ["*.md", ".cursorrules", ".windsurfrules", ".clinerules", ".rules", ".cursor/rules", ".windsurf/rules", ".github/instructions"];
+
+/** The standard rules files present in `files` (repo-relative, `/`-separated). */
+export function standardRuleFiles(files: readonly string[]): string[] {
+	return files.filter(f => STANDARD_FILES.includes(f) || STANDARD_DIRS.some(([dir, ext]) => f.startsWith(dir) && ext.test(f))).sort();
+}

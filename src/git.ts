@@ -119,8 +119,8 @@ export async function trackedFiles(root: string, targets: readonly string[]): Pr
 	return text.split("\0").filter(Boolean);
 }
 
-/** Tracked and untracked-but-not-ignored markdown files, repo-root-relative. */
-export async function markdownFiles(root: string): Promise<string[]> {
-	const text = await git(root, ["ls-files", "-z", "-co", "--exclude-standard", "--", "*.md"]);
+/** Tracked and untracked-but-not-ignored files matching `pathspecs`, repo-root-relative. */
+export async function candidateFiles(root: string, pathspecs: readonly string[]): Promise<string[]> {
+	const text = await git(root, ["ls-files", "-z", "-co", "--exclude-standard", "--", ...pathspecs]);
 	return text.split("\0").filter(Boolean);
 }

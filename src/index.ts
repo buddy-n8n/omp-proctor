@@ -20,7 +20,7 @@ import {
 } from "@oh-my-pi/pi-coding-agent/judgment";
 import { audit, calibrate, MIN_CALIBRATION_SAMPLES } from "./batch";
 import { appendEvents, formatReport, type ProctorEvent, readEvents, summarize } from "./events";
-import { diffTrees, type FileDiff, initRepo, markdownFiles, recentHunks, repoRoot, snapshot, trackedFiles } from "./git";
+import { candidateFiles, diffTrees, type FileDiff, initRepo, recentHunks, repoRoot, snapshot, trackedFiles } from "./git";
 import {
 	activeRules,
 	compilePrompt,
@@ -35,7 +35,7 @@ import {
 	type Rule,
 	saveRubric,
 } from "./rubric";
-import { loadRulesFiles, rulesCandidates, saveRulesFiles } from "./sources";
+import { loadRulesFiles, RULE_PATHSPECS, rulesCandidates, saveRulesFiles, standardRuleFiles } from "./sources";
 import { judgeChange, noteMessage, repairMessage, type Verdict } from "./verdict";
 
 /** Tools whose results are checked per edit. Anything else that writes is caught at turn end. */
@@ -158,51 +158,138 @@ export default function proctor(pi: ExtensionAPI) {
 	const projectRules = (): string[] =>
 		sources.map(s => path.relative(root ?? "", s.path)).filter(rel => !rel.startsWith(".."));
 
-	/** Make `inputs` the rules files. Returns an error message, or undefined on success. */
-	const useRulesFiles = async (ctx: ExtensionContext, inputs: string[]): Promise<string | undefined> => {
-		if (!root) return "not in a git repository";
+	/** Ask the agent to (re)compile the rubric from the current sources. */
+	const startCompile = () => {
+		if (!root) return;
+		compileOffered = true;
+		pi.sendUserMessage(compilePrompt({ files: sources, sourceHash, root, existing: rubric }));
+	};
+
+	/** Paths the user typed: each must be inside the repo and an existing file. */
+	const checkRulesFiles = async (inputs: string[]): Promise<{ rels: string[] } | { error: string }> => {
+		if (!root) return { error: "not in a git repository" };
 		const rels: string[] = [];
 		for (const input of inputs) {
 			const rel = path.relative(root, path.resolve(root, input));
-			if (rel.startsWith("..") || path.isAbsolute(rel)) return `${input} is outside the repository`;
-			if (!(await Bun.file(path.join(root, rel)).exists())) return `${input} does not exist`;
+			if (rel.startsWith("..") || path.isAbsolute(rel)) return { error: `${input} is outside the repository` };
+			if (!(await Bun.file(path.join(root, rel)).exists())) return { error: `${input} does not exist` };
 			rels.push(rel);
 		}
+		return { rels };
+	};
+
+	/** Prompt for a path until it is valid; empty input (or Esc) backs out with nothing changed. */
+	const askRulesPath = async (ctx: ExtensionContext): Promise<string | undefined> => {
+		let prompt = "Rules file path, relative to the repo root (leave empty to go back)";
+		for (;;) {
+			const input = (await ctx.ui.input(prompt, "path/to/rules.md"))?.trim();
+			if (!input) return undefined;
+			const checked = await checkRulesFiles([input]);
+			if ("error" in checked) {
+				prompt = `${checked.error}. Try again, or leave empty to go back`;
+				continue;
+			}
+			return checked.rels[0];
+		}
+	};
+
+	/**
+	 * Checklist of candidate files: toggle, add a path, select all, then Done. Returns the chosen files,
+	 * [] for "none, stop asking", or undefined when the user cancelled.
+	 */
+	const pickRules = async (ctx: ExtensionContext, candidates: string[], preselected: string[], title: string): Promise<string[] | undefined> => {
+		const chosen = new Set(preselected);
+		const add = "Add another file...";
+		const all = "Select all";
+		const none = "None, stop asking";
+		const cancel = "Cancel";
+		let note = "";
+		let cursor = 0;
+		for (;;) {
+			const done = `Done (${chosen.size} selected)`;
+			const options = [...candidates, add, all, done, none, cancel];
+			const picked = await ctx.ui.select(`${title}${note}`, options, {
+				selectionMarker: "checkbox",
+				checkedIndices: candidates.flatMap((f, i) => (chosen.has(f) ? [i] : [])),
+				markableCount: candidates.length, // the action rows stay plain
+				initialIndex: cursor, // a toggle must not throw the cursor back to the top
+			});
+			note = "";
+			if (!picked || picked === cancel) return undefined;
+			if (picked === none) return [];
+			cursor = Math.max(options.indexOf(picked), 0);
+			if (cursor < candidates.length) {
+				const f = candidates[cursor];
+				if (chosen.has(f)) chosen.delete(f);
+				else chosen.add(f);
+			} else if (picked === done) {
+				if (chosen.size > 0) return [...chosen];
+				note = "\nPick at least one file, or choose None / Cancel.";
+			} else if (picked === all) {
+				for (const f of candidates) chosen.add(f);
+			} else if (picked === add) {
+				const file = await askRulesPath(ctx);
+				if (file) {
+					if (!candidates.includes(file)) candidates.push(file);
+					chosen.add(file);
+				}
+			}
+		}
+	};
+
+	type Decision = "compile" | "later";
+
+	/**
+	 * Last step for any pick (picker, /proctor use): show the files, then save and compile now, save and
+	 * compile later, or back out with nothing changed (undefined). Headless has no dialog and compiles.
+	 */
+	const commitRules = async (ctx: ExtensionContext, rels: string[]): Promise<Decision | undefined> => {
+		let decision: Decision | undefined = "compile";
+		if (ctx.hasUI) {
+			const now = "Save and compile the rubric now";
+			const later = "Save, compile later (/proctor compile)";
+			const picked = await ctx.ui.select(`Use ${rels.join(", ")} as Proctor's rules?`, [now, later, "Cancel, change nothing"]);
+			decision = picked === now ? "compile" : picked === later ? "later" : undefined;
+		}
+		if (!decision || !root) return undefined;
 		rulesFiles = rels;
 		rulesConfigured = true;
 		await saveRulesFiles(root, rels);
 		await refreshSources(ctx);
-		return undefined;
+		compileOffered = decision === "later"; // a deferred compile must not be re-offered on the next prompt
+		notify(ctx, `Proctor will read rules from ${rels.join(", ")}. ${decision === "compile" ? "Compiling the rubric now." : "Run /proctor compile when you are ready."}`);
+		return decision;
 	};
 
-	/** No AGENTS.md / CLAUDE.md: tell the user and let them pick the file that holds the rules. */
-	const offerRulesFile = async (ctx: ExtensionContext, force = false) => {
-		if (!root || (!force && (rulesAsked || rulesConfigured || projectRules().length > 0))) return;
+	/**
+	 * No AGENTS.md / CLAUDE.md in the repo (or forced by a command): offer the standard rules files found
+	 * (checked by default) plus other likely markdown, and let the user adjust. Cancelling changes nothing.
+	 */
+	const offerRulesFile = async (ctx: ExtensionContext, force = false): Promise<Decision | undefined> => {
+		if (!root || (!force && (rulesAsked || rulesConfigured || projectRules().length > 0))) return undefined;
 		rulesAsked = true;
-		const candidates = rulesCandidates(await markdownFiles(root));
+		const files = await candidateFiles(root, RULE_PATHSPECS);
+		const read = new Set(projectRules()); // already loaded by OMP; offering them again would be noise
+		const standard = standardRuleFiles(files).filter(f => !read.has(f));
+		const candidates = [...new Set([...standard, ...rulesCandidates(files)])].filter(f => !read.has(f));
 		if (!ctx.hasUI) {
 			const hint = candidates.length ? ` Candidates: ${candidates.join(", ")}.` : "";
 			notify(ctx, `Proctor: no AGENTS.md or CLAUDE.md in this repo, so there are no rules to enforce.${hint} Run /proctor use <file> to choose the rules file.`, "warning");
-			return;
+			return undefined;
 		}
-		const other = "Another file...";
-		const none = "None, stop asking";
 		const title = projectRules().length
-			? "Which file holds extra project rules for Proctor?"
-			: "Proctor found no AGENTS.md or CLAUDE.md. Which file holds this project's rules?";
-		const picked = await ctx.ui.select(title, [...candidates, other, none]);
-		if (!picked) return; // dismissed: ask again next session
-		if (picked === none) {
+			? "Which files hold extra project rules for Proctor?"
+			: "Proctor found no AGENTS.md or CLAUDE.md. Which files hold this project's rules?";
+		const chosen = await pickRules(ctx, candidates, standard, title);
+		if (!chosen) return undefined; // cancelled: nothing saved, ask again next session
+		if (chosen.length === 0) {
 			rulesFiles = [];
 			rulesConfigured = true;
 			await saveRulesFiles(root, []);
 			notify(ctx, "Proctor has no rules file and stays idle here. Run /proctor use <file> any time to pick one.");
-			return;
+			return undefined;
 		}
-		const file = picked === other ? await ctx.ui.input("Rules file path, relative to the repo root", "DESIGN.md") : picked;
-		if (!file) return;
-		const err = await useRulesFiles(ctx, [file]);
-		notify(ctx, err ? `Proctor: ${err}.` : `Proctor will read rules from ${file}.`, err ? "warning" : "info");
+		return commitRules(ctx, chosen);
 	};
 
 	const activate = async (ctx: ExtensionContext) => {
@@ -445,15 +532,18 @@ export default function proctor(pi: ExtensionAPI) {
 						notify(ctx, "Proctor: no rules to compile. No AGENTS.md or CLAUDE.md found; run /proctor use <file> to choose one.", "warning");
 						return;
 					}
-					compileOffered = true;
-					pi.sendUserMessage(compilePrompt({ files: sources, sourceHash, root, existing: current }));
+					startCompile();
 					return;
 				case "use": {
 					if (rest.length === 0) {
-						await offerRulesFile(ctx, true);
+						if ((await offerRulesFile(ctx, true)) === "compile") startCompile();
 					} else {
-						const err = await useRulesFiles(ctx, rest);
-						notify(ctx, err ? `Proctor: ${err}.` : `Proctor will read rules from ${rest.join(", ")}. Run /proctor compile to rebuild the rubric.`, err ? "warning" : "info");
+						const checked = await checkRulesFiles(rest);
+						if ("error" in checked) {
+							notify(ctx, `Proctor: ${checked.error}.`, "warning");
+						} else if ((await commitRules(ctx, checked.rels)) === "compile") {
+							startCompile();
+						}
 					}
 					return;
 				}

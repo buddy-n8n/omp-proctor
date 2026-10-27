@@ -19,7 +19,7 @@ Judgments go through OMP's `judge` model role. With `TYPESAFE_API_KEY` set that 
 
 ## How it works
 
-0. **Find the rules.** Proctor reads AGENTS.md, CLAUDE.md and the rest of the instruction files OMP loads. If the repo has none, the first prompt asks which markdown file holds your rules: it lists likely candidates (root-level `.md` files such as `DESIGN.md`, and any top-level folder with a single `.md`), or you can name another path or pick "None". The answer is saved in `.omp/proctor/config.json` (commit it) and is not asked again. Change it any time with `/proctor use`. Headless runs only print a notice.
+0. **Find the rules.** Proctor reads AGENTS.md, CLAUDE.md and the other instruction files OMP loads. If the repo has none, the first prompt opens a checklist. Rules files other coding agents use are found and checked for you (`GEMINI.md`, `CONVENTIONS.md`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.rules`, `.cursor/rules/*`, `.windsurf/rules/*`, `.github/copilot-instructions.md`, `.github/instructions/*`). Other likely markdown (such as `DESIGN.md`) is listed unchecked. Toggle files, "Select all", or "Add another file..." (a typed path is validated and reprompts until valid; leave it empty to go back). Then Done, and choose to save and compile now, save and compile later, or cancel and change nothing. "None, stop asking" silences it. Accepting the defaults is two Enters. The choice is saved in `.omp/proctor/config.json` (commit it) and not asked again; change it with `/proctor use`. Headless runs only print a notice.
 1. **Compile.** On the first prompt of a session, if the instruction files changed since the rubric was compiled (or there is no rubric), Proctor asks the agent to compile `.omp/proctor/rubric.json`. Commit that file. `/proctor compile` reruns it.
 2. **Edit phase.** Before each `edit`, `write` or `ast_edit`, Proctor snapshots the working tree into a throwaway git index. Afterwards it diffs the two trees and judges each changed file against the `edit` rules in scope. The judge sees only `{file, diff}` and the rules.
 3. **Turn phase.** When the agent is about to stop, Proctor diffs the whole turn against the snapshot taken when the prompt arrived. It runs `turn` rules (scope creep, duplication, single-use abstractions) and the `edit` rules for files that no edit tool touched, such as files written by `bash`. A violation asks for one continuation; a second failing pass is reported to you instead of looping.
@@ -41,7 +41,7 @@ Repair src/legacy.js now, then continue with the task.
 | `/proctor` or `/proctor status` | on/off, rubric state (stale if instruction files changed), which judge model answers |
 | `/proctor on` / `off` | toggle for this session |
 | `/proctor compile` | have the agent (re)compile the rubric |
-| `/proctor use [files...]` | choose the rules file(s): with paths, set them directly; with none, open the picker. Saved to `.omp/proctor/config.json` |
+| `/proctor use [files...]` | choose the rules files: with paths, validate them, confirm, save and (optionally) compile; with none, open the checklist. Saved to `.omp/proctor/config.json` |
 | `/proctor report` | per rule: repairs and notes fired, rules that never fired, unchecked counts by reason |
 | `/proctor audit [paths...]` | judge existing tracked files as if just written |
 | `/proctor calibrate [commits]` | score rules against recent commit hunks (default 20); disable rules whose scores barely move and never reach the note band |
