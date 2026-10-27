@@ -387,6 +387,27 @@ describe("the picker", () => {
 	});
 });
 
+describe("/proctor compile with no rules chosen", () => {
+	test("opens the picker instead of only printing a hint, then compiles from the pick", async () => {
+		sent.length = 0;
+		const dir = await repo({ "DESIGN.md": "- No var.\n" });
+		const h = await host(dir, { select: dialog(toggle("DESIGN.md"), done, compileNow) });
+		await h.start();
+		await h.run("compile");
+		expect(sent).toHaveLength(1); // once, not once for the pick and once for the command
+		expect(sent[0]).toContain("DESIGN.md");
+	});
+
+	test("a user who chose none is not nagged by compile", async () => {
+		const dir = await repo({ "DESIGN.md": "- No var.\n" });
+		await saveRulesFiles(dir, []);
+		const h = await host(dir, { select: () => undefined });
+		await h.start();
+		await h.run("compile");
+		expect(h.asked.select).toBe(0);
+	});
+});
+
 describe("/proctor use", () => {
 	test("checks paths, confirms before saving, and compiles once on yes", async () => {
 		sent.length = 0;
