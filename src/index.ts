@@ -113,10 +113,17 @@ export default function proctor(pi: ExtensionAPI) {
 		return rubric;
 	};
 
-	/** User-only output: the TUI notice area, or stderr when headless (print/RPC), never the model. */
-	const notify = (ctx: ExtensionContext, text: string, level: "info" | "warning" | "error" = "info") => {
+	/** Fading toast (or stderr when headless). Only for mid-turn notes: `notify` mid-turn would steer the model. */
+	const toast = (ctx: ExtensionContext, text: string, level: "info" | "warning" | "error" = "info") => {
 		if (ctx.hasUI) ctx.ui.notify(text, level);
 		else process.stderr.write(`${text}\n`);
+	};
+
+	/** Output the user must not miss: a transcript line instead of a toast that fades; stderr when headless. */
+	const notify = (ctx: ExtensionContext, text: string, level: "info" | "warning" | "error" = "info") => {
+		const line = level === "info" ? text : `${level === "error" ? "Error" : "Warning"}: ${text}`;
+		if (ctx.hasUI) pi.sendMessage({ customType: "proctor-note", content: line, display: true });
+		else process.stderr.write(`${line}\n`);
 	};
 
 	const record = (phase: Phase, verdicts: readonly Verdict[]): ProctorEvent[] =>
@@ -209,7 +216,7 @@ export default function proctor(pi: ExtensionAPI) {
 		rulesAsked = false;
 		await refreshSources(ctx);
 		await currentRubric();
-		if (rubricError) notify(ctx, `Proctor: ${RUBRIC_PATH} is invalid (${rubricError}); checks are off until it is fixed.`, "error");
+		if (rubricError) toast(ctx, `Proctor: ${RUBRIC_PATH} is invalid (${rubricError}); checks are off until it is fixed.`, "error");
 	};
 
 	const needsCompile = () => sources.length > 0 && (!rubric || rubric.sourceHash !== sourceHash);
@@ -222,6 +229,11 @@ export default function proctor(pi: ExtensionAPI) {
 	pi.on("session_switch", async (_event, ctx) => {
 		await activate(ctx);
 	});
+
+	// proctor-note lines are for the user; the model only needs the compile prompt (customType "proctor").
+	pi.on("context", async event => ({
+		messages: event.messages.filter(m => !(m.role === "custom" && m.customType === "proctor-note")),
+	}));
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (!root) await activate(ctx); // repo may have been created mid-session
@@ -293,7 +305,7 @@ export default function proctor(pi: ExtensionAPI) {
 		events.push({ kind: "check", at: now(), phase: "edit", rules: rulesRun, files: diffs.length, ms: Date.now() - started });
 		log([...events, ...record("edit", verdicts)]);
 		const note = noteMessage(verdicts);
-		if (note) notify(ctx, note, "warning");
+		if (note) toast(ctx, note, "warning");
 		const repair = repairMessage(verdicts, "edit");
 		return repair ? { additionalContext: repair } : undefined;
 	});
@@ -364,12 +376,12 @@ export default function proctor(pi: ExtensionAPI) {
 		log(events);
 
 		const note = noteMessage(verdicts);
-		if (note) notify(ctx, note, "warning");
+		if (note) toast(ctx, note, "warning");
 		const repair = repairMessage(verdicts, "turn");
 		if (!repair) return;
 		// One continuation per turn: a second failing pass goes to the user instead of looping.
 		if (event.stop_hook_active) {
-			notify(ctx, `${repair}\n(Not sent: the agent already had one repair pass this turn.)`, "warning");
+			toast(ctx, `${repair}\n(Not sent: the agent already had one repair pass this turn.)`, "warning");
 			return;
 		}
 		return { continue: true, additionalContext: repair };
