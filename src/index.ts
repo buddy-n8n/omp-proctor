@@ -204,7 +204,7 @@ export default function proctor(pi: ExtensionAPI) {
 		const none = "None, stop asking";
 		const cancel = "Cancel";
 		let note = "";
-		let cursor = 0;
+		let cursor = preselected.length ? candidates.length + 2 : 0; // the Done row: Enter accepts the defaults
 		for (;;) {
 			const done = `Done (${chosen.size} selected)`;
 			const options = [...candidates, add, all, done, none, cancel];
@@ -269,18 +269,18 @@ export default function proctor(pi: ExtensionAPI) {
 		if (!root || (!force && (rulesAsked || rulesConfigured || projectRules().length > 0))) return undefined;
 		rulesAsked = true;
 		const files = await candidateFiles(root, RULE_PATHSPECS);
-		const read = new Set(projectRules()); // already loaded by OMP; offering them again would be noise
+		const read = new Set(projectRules().filter(f => !rulesFiles.includes(f))); // loaded by OMP itself; offering them again would be noise
 		const standard = standardRuleFiles(files).filter(f => !read.has(f));
-		const candidates = [...new Set([...standard, ...rulesCandidates(files)])].filter(f => !read.has(f));
+		const candidates = [...new Set([...rulesFiles, ...standard, ...rulesCandidates(files)])].filter(f => !read.has(f)); // the current pick stays listed so it can be kept or removed
 		if (!ctx.hasUI) {
 			const hint = candidates.length ? ` Candidates: ${candidates.join(", ")}.` : "";
 			notify(ctx, `Proctor: no AGENTS.md or CLAUDE.md in this repo, so there are no rules to enforce.${hint} Run /proctor use <file> to choose the rules file.`, "warning");
 			return undefined;
 		}
-		const title = projectRules().length
+		const title = read.size
 			? "Which files hold extra project rules for Proctor?"
 			: "Proctor found no AGENTS.md or CLAUDE.md. Which files hold this project's rules?";
-		const chosen = await pickRules(ctx, candidates, standard, title);
+		const chosen = await pickRules(ctx, candidates, rulesFiles.length ? rulesFiles : standard, title);
 		if (!chosen) return undefined; // cancelled: nothing saved, ask again next session
 		if (chosen.length === 0) {
 			rulesFiles = [];

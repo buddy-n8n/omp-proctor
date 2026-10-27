@@ -68,7 +68,7 @@ const STANDARD_DIRS: ReadonlyArray<readonly [dir: string, ext: RegExp]> = [
 ];
 
 /** Git pathspecs that cover every candidate: any markdown, plus the standard non-markdown names and folders. */
-export const RULE_PATHSPECS = ["*.md", ".cursorrules", ".windsurfrules", ".clinerules", ".rules", ".cursor/rules", ".windsurf/rules", ".github/instructions"];
+export const RULE_PATHSPECS = [":(icase)*.md", ".cursorrules", ".windsurfrules", ".clinerules", ".rules", ".cursor/rules", ".windsurf/rules", ".github/instructions"];
 
 /** The standard rules files present in `files` (repo-relative, `/`-separated). */
 export function standardRuleFiles(files: readonly string[]): string[] {

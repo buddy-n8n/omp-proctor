@@ -215,6 +215,7 @@ describe("the picker", () => {
 		expect(seen!.options).toContain("DESIGN.md"); // offered, unchecked
 		expect(seen!.options.some(o => /README/.test(o))).toBe(false);
 		expect(seen!.opts?.markableCount).toBe(3); // the action rows carry no checkbox
+		expect(seen!.opts?.initialIndex).toBe(seen!.options.findIndex(o => /^Done/.test(o))); // Enter accepts the defaults
 		expect(await loadRulesFiles(dir)).toEqual([".cursorrules", "CONVENTIONS.md"]);
 		expect(result.message.content).toContain(".cursorrules");
 		expect(result.message.content).not.toContain("DESIGN.md");
@@ -232,7 +233,7 @@ describe("the picker", () => {
 		await h.start();
 		await h.turn();
 		expect(seen.map(s => s.checked)).toEqual([["CONVENTIONS.md"], [], ["DESIGN.md"]]); // preselected, removed, then DESIGN.md added
-		expect(seen.map(s => s.cursor)).toEqual([0, 0, 1]);
+		expect(seen.map(s => s.cursor)).toEqual([5, 0, 1]); // starts on Done (5 = 3 files + Add + Select all), then stays on the toggled row
 		expect(await loadRulesFiles(dir)).toEqual(["DESIGN.md"]);
 
 		const all = await repo({ "CONVENTIONS.md": "a\n", "DESIGN.md": "b\n", "NOTES.md": "c\n" });
@@ -279,9 +280,32 @@ describe("the picker", () => {
 		expect(await h.turn()).toBeUndefined();
 		expect(await loadRulesFiles(dir)).toEqual(["DESIGN.md"]);
 		expect(sent).toHaveLength(0);
+		expect(await h.turn()).toBeUndefined(); // the next prompt neither asks nor compiles
+		expect(h.asked.select).toBe(3);
+		expect(sent).toHaveLength(0);
 		await h.run("compile");
 		expect(sent).toHaveLength(1);
 		expect(sent[0]).toContain("DESIGN.md");
+	});
+
+	test("/proctor use lists the current pick checked, so it can be kept or removed", async () => {
+		const dir = await repo({ "DESIGN.md": "x\n", "NOTES.md": "y\n" });
+		await saveRulesFiles(dir, ["DESIGN.md"]);
+		const seen: Array<{ options: string[]; checked: string[] }> = [];
+		const h = await host(dir, { select: dialog((o, _t, opts) => (seen.push({ options: o, checked: checkedIn(o, opts) }), cancel(o))) });
+		await h.start();
+		await h.run("use");
+		expect(seen[0].options).toContain("DESIGN.md");
+		expect(seen[0].checked).toEqual(["DESIGN.md"]);
+	});
+
+	test("uppercase .MD files are offered too", async () => {
+		const dir = await repo({ "RULES.MD": "x\n" });
+		let offered: string[] = [];
+		const h = await host(dir, { select: dialog(o => ((offered = o), cancel(o))) });
+		await h.start();
+		await h.turn();
+		expect(offered).toContain("RULES.MD");
 	});
 
 	test("cancelling at the last step saves nothing", async () => {
